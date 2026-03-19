@@ -22,6 +22,11 @@ db.exec(`
     name TEXT NOT NULL UNIQUE
   );
 
+  CREATE TABLE IF NOT EXISTS expense_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+  );
+
   CREATE TABLE IF NOT EXISTS income_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     resident_id INTEGER NOT NULL,
@@ -65,6 +70,9 @@ if (residentCount.count === 0) {
   const insertCategory = db.prepare("INSERT INTO income_categories (name) VALUES (?)");
   ["Aidat", "Asansör Revizyon", "Kamera Bakım"].forEach(cat => insertCategory.run(cat));
 
+  const insertExpenseCategory = db.prepare("INSERT INTO expense_categories (name) VALUES (?)");
+  ["Elektrik Faturası", "Temizlik Ücreti"].forEach(cat => insertExpenseCategory.run(cat));
+
   db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("carryover", "3925");
 }
 
@@ -76,11 +84,19 @@ async function startServer() {
   app.get("/api/data", (req, res) => {
     const residents = db.prepare("SELECT * FROM residents ORDER BY CAST(apartment_no AS INTEGER)").all();
     const categories = db.prepare("SELECT * FROM income_categories").all();
+    const expenseCategories = db.prepare("SELECT * FROM expense_categories").all();
     const incomeRecords = db.prepare("SELECT * FROM income_records WHERE year = 2026").all();
     const expenses = db.prepare("SELECT * FROM expenses ORDER BY date DESC").all();
     const carryover = db.prepare("SELECT value FROM settings WHERE key = 'carryover'").get() as { value: string };
 
-    res.json({ residents, categories, incomeRecords, expenses, carryover: parseFloat(carryover?.value || "0") });
+    res.json({ 
+      residents, 
+      categories, 
+      expenseCategories,
+      incomeRecords, 
+      expenses, 
+      carryover: parseFloat(carryover?.value || "0") 
+    });
   });
 
   app.post("/api/income", (req, res) => {
@@ -121,6 +137,16 @@ async function startServer() {
     const { name } = req.body;
     try {
       db.prepare("INSERT INTO income_categories (name) VALUES (?)").run(name);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(400).json({ error: "Kategori zaten mevcut" });
+    }
+  });
+
+  app.post("/api/expense-category", (req, res) => {
+    const { name } = req.body;
+    try {
+      db.prepare("INSERT INTO expense_categories (name) VALUES (?)").run(name);
       res.json({ success: true });
     } catch (e) {
       res.status(400).json({ error: "Kategori zaten mevcut" });

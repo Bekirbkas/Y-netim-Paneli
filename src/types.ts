@@ -9,6 +9,11 @@ export interface IncomeCategory {
   name: string;
 }
 
+export interface ExpenseCategory {
+  id: number;
+  name: string;
+}
+
 export interface IncomeRecord {
   id: number;
   resident_id: number;
@@ -29,6 +34,7 @@ export interface Expense {
 export interface AppData {
   residents: Resident[];
   categories: IncomeCategory[];
+  expenseCategories: ExpenseCategory[];
   incomeRecords: IncomeRecord[];
   expenses: Expense[];
   carryover: number;

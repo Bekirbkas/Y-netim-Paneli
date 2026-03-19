@@ -17,9 +17,12 @@ import {
   Menu,
   LayoutDashboard,
   Receipt,
-  Users
+  Users,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { AppData, Resident, IncomeCategory, IncomeRecord, Expense } from './types';
 
 const MONTHS = [
@@ -31,7 +34,7 @@ export default function App() {
   const [data, setData] = useState<AppData | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'income_list' | 'income_table' | 'expense_list' | 'expense_table' | 'residents'>('dashboard');
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<number>(1); // Default to 'Aidat'
   const [selectedYear] = useState(2026);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -42,6 +45,7 @@ export default function App() {
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showExpenseCategoryModal, setShowExpenseCategoryModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ type: 'income' | 'expense', id: number } | null>(null);
 
   useEffect(() => {
@@ -49,7 +53,7 @@ export default function App() {
     const savedMode = localStorage.getItem('darkMode');
     if (savedMode !== null) {
       setDarkMode(savedMode === 'true');
-    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    } else {
       setDarkMode(true);
     }
   }, []);
@@ -293,6 +297,7 @@ export default function App() {
         )}
         {showExpenseModal && (
           <ExpenseModal 
+            data={data}
             expense={editingExpense}
             onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }} 
             onSave={async (exp) => {
@@ -307,6 +312,7 @@ export default function App() {
               setShowExpenseModal(false);
               setEditingExpense(null);
             }} 
+            onAddCategory={() => setShowExpenseCategoryModal(true)}
             onDelete={(id) => setShowDeleteConfirm({ type: 'expense', id })}
           />
         )}
@@ -331,6 +337,7 @@ export default function App() {
         )}
         {showCategoryModal && (
           <CategoryModal 
+            title="Yeni Gelir Kategorisi"
             onClose={() => setShowCategoryModal(false)} 
             onSave={async (name) => {
               await fetch('/api/income-category', {
@@ -340,6 +347,21 @@ export default function App() {
               });
               fetchData();
               setShowCategoryModal(false);
+            }} 
+          />
+        )}
+        {showExpenseCategoryModal && (
+          <CategoryModal 
+            title="Yeni Gider Kategorisi"
+            onClose={() => setShowExpenseCategoryModal(false)} 
+            onSave={async (name) => {
+              await fetch('/api/expense-category', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+              });
+              fetchData();
+              setShowExpenseCategoryModal(false);
             }} 
           />
         )}
@@ -452,11 +474,50 @@ function IncomeTable({ data, selectedCategory, setSelectedCategory, onUpdate, on
   onUpdate: (resId: number, month: number, amount: number, status: 'paid' | 'exempt' | 'pending') => void,
   onAddCategory: () => void
 }) {
+  const handleExportPDF = () => {
+    const categoryName = data.categories.find(c => c.id === selectedCategory)?.name || 'Gelir';
+    const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
+    
+    // Title
+    doc.setFontSize(18);
+    doc.text(`Hasan Apartmanı - ${categoryName} Çizelgesi (2026)`, 14, 15);
+    
+    const headers = ['Daire', 'Sakin', ...MONTHS, 'Toplam'];
+    const tableData = data.residents.map(res => {
+      const resRecords = data.incomeRecords.filter(r => r.resident_id === res.id && r.category_id === selectedCategory);
+      const total = resRecords.reduce((sum, r) => sum + (r.status === 'paid' ? r.amount : 0), 0);
+      
+      const row = [
+        res.apartment_no.toString(),
+        res.name,
+        ...MONTHS.map((_, idx) => {
+          const record = resRecords.find(r => r.month === idx + 1);
+          if (record?.status === 'paid') return `₺${record.amount}`;
+          if (record?.status === 'exempt') return 'MUAF';
+          return '-';
+        }),
+        `₺${total.toLocaleString()}`
+      ];
+      return row;
+    });
+
+    autoTable(doc, {
+      head: [headers],
+      body: tableData,
+      startY: 25,
+      styles: { fontSize: 7, cellPadding: 2 },
+      headStyles: { fillColor: [16, 185, 129] }, // Emerald 500
+      theme: 'grid'
+    });
+
+    doc.save(`Hasan_Apartmani_Gelir_${categoryName.replace(/\s+/g, '_')}_2026.pdf`);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0 no-scrollbar flex-nowrap w-full">
-          <div className="flex items-center gap-2 flex-nowrap">
+          <div className="flex items-center gap-2 flex-nowrap flex-1">
             {data.categories.map((cat) => (
               <button
                 key={cat.id}
@@ -473,11 +534,18 @@ function IncomeTable({ data, selectedCategory, setSelectedCategory, onUpdate, on
               <Plus size={20} />
             </button>
           </div>
+          <button 
+            onClick={handleExportPDF}
+            className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded-xl font-bold hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-all flex-shrink-0"
+          >
+            <Download size={18} />
+            <span className="hidden sm:inline">Rapor Al (PDF)</span>
+          </button>
         </div>
       </div>
 
       <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto no-scrollbar">
+        <div className="overflow-x-auto custom-scrollbar pb-2">
           <table className="w-full text-left border-collapse table-auto">
             <thead>
               <tr className="bg-zinc-50 dark:bg-zinc-800/50 border-b border-zinc-200 dark:border-zinc-800">
@@ -844,9 +912,57 @@ function IncomeModal({ data, income, onClose, onSave, onAddCategory, onDelete }:
 function ExpenseTable({ expenses }: { expenses: Expense[] }) {
   const descriptions = useMemo(() => Array.from(new Set(expenses.map(e => e.description))), [expenses]);
   
+  const handleExportPDF = () => {
+    const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
+    
+    // Title
+    doc.setFontSize(18);
+    doc.text(`Hasan Apartmanı - Gider Çizelgesi (2026)`, 14, 15);
+    
+    const headers = ['Harcama Nedeni', ...MONTHS, 'Toplam'];
+    const tableData = descriptions.map(desc => {
+      const descExpenses = expenses.filter(e => e.description === desc);
+      const total = descExpenses.reduce((sum, e) => sum + e.amount, 0);
+      
+      const row = [
+        desc,
+        ...MONTHS.map((_, idx) => {
+          const monthIdx = idx + 1;
+          const monthTotal = descExpenses
+            .filter(e => new Date(e.date).getMonth() + 1 === monthIdx)
+            .reduce((sum, e) => sum + e.amount, 0);
+          return monthTotal > 0 ? `₺${monthTotal.toLocaleString()}` : '-';
+        }),
+        `₺${total.toLocaleString()}`
+      ];
+      return row;
+    });
+
+    autoTable(doc, {
+      head: [headers],
+      body: tableData,
+      startY: 25,
+      styles: { fontSize: 7, cellPadding: 2 },
+      headStyles: { fillColor: [244, 63, 94] }, // Rose 500
+      theme: 'grid'
+    });
+
+    doc.save(`Hasan_Apartmani_Gider_Cizelgesi_2026.pdf`);
+  };
+
   return (
-    <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-      <div className="overflow-x-auto no-scrollbar">
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <button 
+          onClick={handleExportPDF}
+          className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded-xl font-bold hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-all"
+        >
+          <Download size={18} />
+          <span>Rapor Al (PDF)</span>
+        </button>
+      </div>
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
+      <div className="overflow-x-auto custom-scrollbar pb-2">
         <table className="w-full text-left border-collapse table-auto">
           <thead>
             <tr className="bg-zinc-50 dark:bg-zinc-800/50 border-b border-zinc-200 dark:border-zinc-800">
@@ -889,6 +1005,7 @@ function ExpenseTable({ expenses }: { expenses: Expense[] }) {
           </tbody>
         </table>
       </div>
+    </div>
     </div>
   );
 }
@@ -967,7 +1084,14 @@ function ResidentList({ residents, onUpdate }: { residents: Resident[], onUpdate
   );
 }
 
-function ExpenseModal({ expense, onClose, onSave, onDelete }: { expense: Expense | null, onClose: () => void, onSave: (exp: any) => void, onDelete: (id: number) => void }) {
+function ExpenseModal({ data, expense, onClose, onSave, onAddCategory, onDelete }: { 
+  data: AppData,
+  expense: Expense | null, 
+  onClose: () => void, 
+  onSave: (exp: any) => void, 
+  onAddCategory: () => void,
+  onDelete: (id: number) => void 
+}) {
   const [description, setDescription] = useState(expense?.description || '');
   const [amount, setAmount] = useState(expense?.amount?.toString() || '');
   const [date, setDate] = useState(expense?.date || new Date().toISOString().split('T')[0]);
@@ -987,15 +1111,26 @@ function ExpenseModal({ expense, onClose, onSave, onDelete }: { expense: Expense
           </button>
         </div>
         <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Açıklama</label>
-            <input 
-              type="text" 
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800 border-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="Örn: Elektrik Faturası"
-            />
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Harcama Nedeni</label>
+              <select 
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800 border-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">Seçiniz...</option>
+                {data.expenseCategories.map(cat => (
+                  <option key={cat.id} value={cat.name}>{cat.name}</option>
+                ))}
+              </select>
+            </div>
+            <button 
+              onClick={onAddCategory}
+              className="p-3 bg-zinc-100 dark:bg-zinc-800 rounded-xl text-zinc-500 hover:text-emerald-500 transition-colors"
+            >
+              <Plus size={20} />
+            </button>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -1036,7 +1171,8 @@ function ExpenseModal({ expense, onClose, onSave, onDelete }: { expense: Expense
           </button>
           <button 
             onClick={() => onSave({ description, amount: parseFloat(amount), date })}
-            className="flex-1 py-3 rounded-xl font-bold bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-95 transition-all"
+            disabled={!description || !amount}
+            className="flex-1 py-3 rounded-xl font-bold bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100"
           >
             {expense ? 'Güncelle' : 'Kaydet'}
           </button>
@@ -1083,7 +1219,7 @@ function DeleteConfirmModal({ onClose, onConfirm, type }: { onClose: () => void,
   );
 }
 
-function CategoryModal({ onClose, onSave }: { onClose: () => void, onSave: (name: string) => void }) {
+function CategoryModal({ onClose, onSave, title }: { onClose: () => void, onSave: (name: string) => void, title: string }) {
   const [name, setName] = useState('');
 
   return (
@@ -1095,7 +1231,7 @@ function CategoryModal({ onClose, onSave }: { onClose: () => void, onSave: (name
         className="bg-white dark:bg-zinc-900 w-full max-w-sm rounded-3xl shadow-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden"
       >
         <div className="p-6 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
-          <h3 className="text-xl font-bold">Yeni Kategori Ekle</h3>
+          <h3 className="text-xl font-bold">{title}</h3>
           <button onClick={onClose} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full transition-colors">
             <X size={20} />
           </button>
